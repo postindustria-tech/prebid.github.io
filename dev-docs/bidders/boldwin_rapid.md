@@ -1,10 +1,10 @@
 ---
-layout: bidder
-title: Boldwin
-description: Prebid Boldwin Bidder Adapter
+layout: boldwin_rapid
+title: Boldwin Rapid
+description: Prebid Boldwin Rapid Bidder Adapter
 pbjs: true
 pbs: true
-biddercode: boldwin
+biddercode: boldwin_rapid
 gvl_id: 1151
 tcfeu_supported: true
 usp_supported: true
