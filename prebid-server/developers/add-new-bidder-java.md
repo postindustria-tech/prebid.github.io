@@ -177,7 +177,7 @@ Modify this template for your bid adapter:
 - If absolutely necessary, change the `modifying-vast-xml-allowed` value to `false` to opt-out of [video impression tracking](https://github.com/prebid/prebid-server/issues/1015). However, please note that Prebid Server host companies depend on this feature being enabled to track video analytics. This feature has been live for many years with no known problems.
 - Change the `pbs-enforces-ccpa` to `false` if you'd like to disable ccpa enforcement. Defaults to `true`.
 - Change the `vendor-id` value to id of your bidding server as registered with the [GDPR Global Vendor List (GVL)](https://iabeurope.eu/tcf-for-vendors/). Leave this as `0` if you are not registered with IAB Europe.
-- Choose the `supported-vendors` constants: These constants should be unique. The list of existing vendor constants can be found [here](https://github.com/prebid/prebid-server-java/blob/master/src/main/java/org/prebid/server/bidder/ViewabilityVendors.java).
+- Choose the `supported-vendors` constants: These constants should be unique. The existing vendor constants are listed in [ViewabilityVendors.java](https://github.com/prebid/prebid-server-java/blob/master/src/main/java/org/prebid/server/bidder/ViewabilityVendors.java).
 - Remove the `capabilities` (app/site/dooh) and `mediaTypes` (banner/video/audio/native) combinations which your adapter does not support. (Note: 'dooh' is [Digital Out Of Home](/prebid-server/use-cases/pbs-dooh.html))
 - If your auction endpoint supports gzip compression, setting 'endpoint-compression' to 'gzip' will save on network fees.
 - If your auction endpoint or finance systems have limited currency support, you can declare the `meta-info.currency-accepted` array. If you do, your bid adapter will not be called for auctions being conducted outside your set of allowable currencies.
@@ -680,6 +680,9 @@ If you'd like to support Long Form Video Ad Pods, then you'll need to provide th
 
 {: .alert.alert-info :}
 Either `.Bids[].BidVideo.PrimaryCategory` or `.Bids[].Bid.Cat` should be provided.
+
+{: .alert.alert-warning :}
+`.Bids[].DealPriority` and its response field `seatbid[].bid[].ext.prebid.dealpriority` are deprecated. They are only compared against the ad pod `minDealTier`, where a higher value wins. Do not use them for deal ranking.
 
 ##### Metadata
 
