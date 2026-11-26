@@ -942,6 +942,9 @@ If you'd like to support [Long Form Video Ad Pods](/dev-docs/modules/adpod.html)
 {: .alert.alert-info :}
 Either `.Bids[].BidVideo.PrimaryCategory` or `.Bids[].Bid.Cat` should be provided.
 
+{: .alert.alert-warning :}
+`.Bids[].DealPriority` and its response field `seatbid[].bid[].ext.prebid.dealpriority` are deprecated. They are only compared against the ad pod `minDealTier`, where a higher value wins. Do not use them for deal ranking. An ad server adapter returns deal metadata as JSON in `.Bids[].Bid.Ext` under `prebid.deal`, and the deal priority in `prebid.deal.priority`, where a lower value wins. See [ad server deal metadata](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#ad-server-deal-metadata).
+
 ##### Metadata
 
 Prebid has introduced a standard object model for sharing granular bid response data with publishers, analytics, and reporting systems. We encourage adapters to provide as much information as possible in the bid response.

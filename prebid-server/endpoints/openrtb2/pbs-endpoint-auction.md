@@ -580,7 +580,7 @@ to set these params on the response at `response.seatbid[i].bid[j].ext.prebid.ta
 | --- | --- | --- | --- | --- |
 | pricegranularity | no | Defines how PBS quantizes bid prices into buckets | (see below) | object |
 | pricegranularity.precision | no | How many decimal places are there in price buckets | Defaults to 2 | integer |
-| pricegranularity.ranges | no | Non-overlapping price bucket definitions  | (see below) | array of objects |
+| pricegranularity.ranges | no | Non-overlapping price bucket definitions | (see below) | array of objects |
 | pricegranularity.ranges.max | no | Top end of this range of price buckets. The bottom end is 0 or the max of the previous bucket. Note: in order to prevent ranges with gaps, there's no 'min' attribute. | 5.55 | float |
 | pricegranularity.ranges.increment | no | Size of the buckets in this range. | 1.50 | float |
 | mediatypepricegranularity | no | Defines how PBS quantizes bid prices into buckets, allowing for different ranges by media type. | (see below) | object |
@@ -1901,6 +1901,46 @@ Here's how this works:
 1. If the bidder declares that they don't support multiformat and the incoming request contains multiple formats, then one of the formats is chosen by either `$.ext.prebid.biddercontrols.BIDDER.prefmtype` or config `auction.preferredmediatype.BIDDER`
 1. If multiformat-supported is false, and if the specified prefmtype is not part of the request, then the imp doesn't go out to the bidder.
 
+##### Ad Server Adapters
+
+{: .alert.alert-info :}
+PBS-Go only
+
+An ad server adapter is a bid adapter that returns line items booked in a publisher ad server, together with deal metadata such as the line item type and priority. `ext.prebid.as` tells Prebid Server which bidders are ad server adapters and may return [deal metadata](#ad-server-deal-metadata). For example:
+
+```json5
+{
+  "ext": {
+    "prebid": {
+      "as": {
+        "ap": true,
+        "apb": ["exampleAdServer"]
+      }
+    }
+  }
+}
+```
+
+Only `ap` and `apb` take effect for now. The other fields are reserved for ranking, floors and short-circuit, which are not implemented yet. Prebid Server checks their types and the values of `mode` and `floor.source`, but does not use them.
+
+{: .table .table-bordered .table-striped }
+| Attribute | Required? | Description | Example | Type |
+| --- | --- | --- | --- | --- |
+| ap | No | "Allow priority". Nothing in this object takes effect unless `ap` is `true`. Defaults to `false`. | `true` | boolean |
+| apb | No | "Allow priority bidders". The bidder codes trusted to return deal metadata. Deal metadata from any other bidder is removed. A bid returned under an alternate bidder code never keeps deal metadata, even when that code is listed. Codes are compared without case. | `["exampleAdServer"]` | array of strings |
+| mode | No | `parallel` or `pre-auction`. The auction always runs in parallel mode for now. | `"parallel"` | string |
+| tmax_ms | No | Time reserved for the ad server phase in pre-auction mode. | `150` | integer |
+| floor.enabled | No | Raise the imp floor to the highest trusted deal value in pre-auction mode. | `true` | boolean |
+| floor.source | No | Which deal value feeds the floor: `priority_adjusted_cpm` or `cpm`. | `"cpm"` | string |
+| short_circuit.enabled | No | End the auction when every imp has a qualifying deal. | `true` | boolean |
+| short_circuit.max_priority | No | The highest priority value that qualifies for short-circuit. | `4` | integer |
+| priority_offsets | No | Bidder code to an integer added to each returned priority before ranking. | `{"exampleSsp": -2}` | object |
+
+Prebid Server does the following with `ext.prebid.as`:
+
+1. It does not forward the object to bid adapters.
+1. If the object has a wrong type, or an unknown `mode` or `floor.source`, Prebid Server removes it and returns warning code 10018 in `ext.warnings.general`. The auction goes on as if `ap` were `false`.
+
 #### OpenRTB Response Extensions
 
 ##### Bidder Response Times
@@ -2009,6 +2049,74 @@ This contains the request after the resolution of stored requests and implicit i
   }
 }
 ```
+
+`response.ext.debug.as.stripped` (PBS-Go only) lists each bid whose [deal metadata](#ad-server-deal-metadata) Prebid Server removed, with the reason. It is populated only in debug mode and when the request has `ext.prebid.as.ap: true`. A bid that was rejected before the response, for example by floors, is not listed.
+
+```json5
+"ext": {
+  "debug": {
+    "as": {
+      "stripped": [{
+        "seat": "bidderA",
+        "impid": "imp1",
+        "bidid": "bid2",
+        "reason": "bidder bidderA is not in request.ext.prebid.as.apb"
+      }]
+    }
+  }
+}
+```
+
+##### Ad Server Deal Metadata
+
+{: .alert.alert-info :}
+PBS-Go only
+
+An [ad server adapter](#ad-server-adapters) returns deal metadata on each bid in `seatbid[].bid[].ext.prebid.deal`. Prebid.js reads it into `bid.meta.deal`. For example:
+
+```json5
+{
+  "id": "bid1",
+  "impid": "imp1",
+  "dealid": "sponsor-123",
+  "price": 5.00,
+  "ext": {
+    "prebid": {
+      "deal": {
+        "type": 1,
+        "cpm": 5.00,
+        "priority_adjusted_cpm": 8.40,
+        "on_schedule": 0.8,
+        "priority": 4,
+        "source": "adserver"
+      }
+    }
+  }
+}
+```
+
+{: .table .table-bordered .table-striped }
+| Attribute | Required? | Description | Type |
+| --- | --- | --- | --- |
+| type | Yes | `0` unknown, `1` sponsorship, `2` reservation, `3` non-reservation, `4` house. | integer |
+| cpm | For types 1 and 2 | Nominal deal CPM. Non-negative. | number |
+| priority_adjusted_cpm | No | The CPM-equivalent value after the ad server applies delivery pressure. Non-negative. | number |
+| on_schedule | No | Delivery pacing, for analytics only. Non-negative. | number |
+| priority | No | Lower value means higher priority. | integer |
+| source | Set by PBS | Prebid Server sets `"adserver"` on deal metadata it checked and kept. A value from the adapter is replaced. | string |
+
+Prebid Server does the following with `ext.prebid.deal`:
+
+1. It keeps the object only when the request has `ext.prebid.as.ap: true`, the bidder that Prebid Server called is in `ext.prebid.as.apb`, the bid seat is that bidder and not an alternate bidder code, and the bid has a non-empty `dealid`.
+1. It removes the object when `type` is missing or not an integer from 0 to 4, when a sponsorship or reservation has no valid `cpm`, or when the object is not a JSON object. A field with a wrong type or a number out of range is left out, and the rest of the object is kept. The same applies to a negative `cpm`, `priority_adjusted_cpm` or `on_schedule`. Prebid.js is more lenient here: it reads a `type` that is not an integer as `0` and does not require `cpm`, so a bid that passes in Prebid.js can lose its deal metadata in Prebid Server.
+1. It converts `cpm` and `priority_adjusted_cpm` with the same rate as `price`, so they are in the same currency as `price`. If a static [bid adjustment](#bid-adjustments) rule moves `price` to another currency, these values move to that currency too. Otherwise bid adjustments do not change these values, because they correct the bidder's price and not the values booked in the ad server. If a value cannot be converted, the object is removed.
+1. It does not change `price`, `dealid` or targeting because of deal metadata. A bid whose deal metadata was removed stays in the auction.
+1. It removes the adapter's own `ext.prebid.deal` from the bid before the bid is cached in Prebid Cache. The cached bid does not carry deal metadata.
+1. When the request has `ap: true`, debug is on, and the object was removed, it lists the bid in [`ext.debug.as`](#debug-output). It also returns warning code 10019 with the seat, the bid id and the reason in `ext.warnings.BIDDER`, where `BIDDER` is the bid adapter that made the request. Without `ap`, deal metadata is removed with no warning.
+
+A [stored auction response](#stored-responses) can carry deal metadata, for example to test an ad server setup. Prebid Server applies the same checks to it and keeps the amounts as written, because stored auction responses skip currency conversion. A removed object from a stored auction response is listed in `ext.debug.as` only, without warning 10019.
+
+The /openrtb2/amp and /openrtb2/video endpoints return targeting only, so they do not return deal metadata.
 
 ##### Original Bid CPM
 
@@ -2132,7 +2240,7 @@ The Prebid SDK version comes from:
 {: .table .table-bordered .table-striped }
 | Extension | Description | Type | Adapter Sees? |
 | --- | --- | --- | --- |
-| imp[]<wbr>.ext<wbr>.data<wbr>.ATTR | Publisher-specific adunit-level first party data.<br>ex: `{"pmp_elig": true}` | any  | yes |
+| imp[]<wbr>.ext<wbr>.data<wbr>.ATTR | Publisher-specific adunit-level first party data.<br>ex: `{"pmp_elig": true}` | any | yes |
 | imp[]<wbr>.ext<wbr>.BIDDER | DEPRECATED bidder parameters.<br>ex: `imp[].ext.prebid.bidder.biddera: { placement: 123 }` | object | Seen as imp[]<wbr>.ext<wbr>.bidder |
 | imp[]<wbr>.ext<wbr>.prebid<wbr>.bidder<wbr>.BIDDER | Bidder parameters.<br>ex: `imp[].ext.prebid.bidder.biddera: { placement: 123 }` | object | Seen as imp[]<wbr>.ext.<wbr>bidder |
 | imp[]<wbr>.ext<wbr>.prebid<wbr>.options<wbr>.echovideoattrs | Causes PBS-core to [echo video attributes](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#echo-storedrequest-video-attributes) on seatbid[].bid[].ext.prebid.storedrequestattributes so the player has access to them<br>ex: `true` | boolean | yes |
@@ -2150,6 +2258,7 @@ The Prebid SDK version comes from:
 | ext<wbr>.prebid<wbr>.auctiontimestamp | Timestamp for use in correlating PBJS and PBS events. | long int | yes |
 | ext<wbr>.prebid<wbr>.aliases | defines alternate names for bidders, see [bidder aliases](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#bidder-aliases). | object | no |
 | ext<wbr>.prebid<wbr>.aliasgvlids | defines the global vendor list IDs for aliases, see [bidder aliases](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#bidder-aliases). | object | no |
+| ext<wbr>.prebid<wbr>.as | (PBS-Go only) ad server adapter configuration, see [ad server adapters](#ad-server-adapters). | object | no |
 | ext<wbr>.prebid<wbr>.bidadjustmentfactors | Adjust the CPM value of bidrequests, see [bid adjustments](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#bid-adjustments) | object | no |
 | ext<wbr>.prebid<wbr>.bidderconfig | bidder-specific first party data, see [first party data](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#first-party-data-support). | array of obj | no |
 | ext<wbr>.prebid<wbr>.bidderparams | Publishers can specify any adapter-specific cross-impression attributes, see [global bid parameters](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#global-bid-adapter-parameters) | object | no |
@@ -2158,7 +2267,7 @@ The Prebid SDK version comes from:
 | ext<wbr>.prebid<wbr>.currency<wbr>.rates | publisher-defined currency conversions, see [currency support](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#currency-support). | object | yes |
 | ext<wbr>.prebid<wbr>.currency<wbr>.usepbsrates | if true, currency.rates is used as a backup if dynamic rates aren't found. If false, dynamic rates are not used.<br>ex: `true` | boolean | yes |
 | ext<wbr>.prebid<wbr>.data.<wbr>bidders | bidders in scope for bidder-specific first party data, see [first party data](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#first-party-data-support). | array of strings | no |
-| ext<wbr>.prebid<wbr>.data.<wbr>eidpermissions | Allows publishers to define which bidders are allowed to see which extended IDs, see [eid permissions](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#eid-permissions) | object  | no |
+| ext<wbr>.prebid<wbr>.data.<wbr>eidpermissions | Allows publishers to define which bidders are allowed to see which extended IDs, see [eid permissions](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#eid-permissions) | object | no |
 | ext<wbr>.prebid<wbr>.debug | Provides debug output in response. | boolean | yes |
 | ext<wbr>.prebid<wbr>.trace | Provides trace output in response. | "verbose" or "basic" | yes |
 | ext<wbr>.prebid<wbr>.events | Enables VAST impression tracking injection for the request when an empty object is provided. This is an alernative method from using account configuration. | object | no |
@@ -2189,6 +2298,7 @@ The Prebid SDK version comes from:
 | seatbid[]<wbr>.bid[]<wbr>.ext<wbr>.prebid<wbr>.bidid | Defines a Prebid-generated id for this bid in case the bidder's ID isn't unique. | string |
 | seatbid[]<wbr>.bid[]<wbr>.ext<wbr>.prebid<wbr>.cache<wbr>.bids/vastXml<wbr>.cacheId | ID of the cached object, see [cache bids](#cache-bids). | string |
 | seatbid[]<wbr>.bid[]<wbr>.ext<wbr>.prebid<wbr>.cache<wbr>.bids/vastXml<wbr>.url | URL location of the cached object, see [cache bids](#cache-bids). | string |
+| seatbid[]<wbr>.bid[]<wbr>.ext<wbr>.prebid<wbr>.deal | (PBS-Go only) Deal metadata from a trusted ad server adapter, see [ad server deal metadata](#ad-server-deal-metadata). | object |
 | seatbid[]<wbr>.bid[]<wbr>.ext<wbr>.prebid<wbr>.events<wbr>.imp | URL for registering an impression event for this bid. | string |
 | seatbid[]<wbr>.bid[]<wbr>.ext<wbr>.prebid<wbr>.events<wbr>.win | URL for registering a BIDS_WON event for this bid. | string |
 | seatbid[]<wbr>.bid[]<wbr>.ext<wbr>.prebid<wbr>.meta<wbr>.ATTR | bidder-supplied metadata, see [building a bid adapter](/prebid-server/developers/add-new-bidder-go.html) | object |
@@ -2198,6 +2308,7 @@ The Prebid SDK version comes from:
 | seatbid[]<wbr>.bid[]<wbr>.ext<wbr>.origbidcpm | Copy of the unadjusted bid price, see [original bid cpm](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#original-bid-cpm). | float |
 | seatbid[]<wbr>.bid[]<wbr>.ext<wbr>.origbidcur | Copy of the original bid currency, see [original bid cpm](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#original-bid-cpm). | string |
 | ext<wbr>.debug | debug mode: useful output, see [debug output](/prebid-server/endpoints/openrtb2/pbs-endpoint-auction.html#debug-output). | object |
+| ext<wbr>.debug<wbr>.as<wbr>.stripped | (PBS-Go only) Debug Mode: deal metadata that PBS removed, with the reason, see [debug output](#debug-output). | array of objects |
 | ext<wbr>.debug<wbr>.httpcalls<wbr>.BIDDER |Debug Mode: the HTTP request/response from the named bidder | object |
 | ext<wbr>.errors<wbr>.BIDDER | Debug Mode: errors from the named bidder | object |
 | ext<wbr>.responsetimemillisv.BIDDER | Debug Mode: how long the named bidder took to respond with a bid. | integer |
